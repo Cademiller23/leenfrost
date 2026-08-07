@@ -210,7 +210,7 @@ def run_gate(
             f"PruneResult fields={list(type(pruned_result).model_fields)} "
             "— expected final_messages/messages/pruned_messages"
         )
-    final_tokens = pruned_result.final_tokens
+    final_tokens = pruned_result.pruned_tokens
 
     budget_cfg = budget or BudgetConfig(
         max_tokens_per_call=cfg.max_tokens_per_call,
