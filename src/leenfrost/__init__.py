@@ -3,6 +3,8 @@
 from leenfrost.budget import evaluate_budget
 from leenfrost.cache import cache_stats, lookup, store
 from leenfrost.config import LeenfrostConfig, get_config
+from leenfrost.everos import memory_add, memory_flush, memory_search, extract_memory_texts
+from leenfrost.memory_roi import rank_and_select, memories_to_system_block, MemoryROIResult
 from leenfrost.cortex import build_complete_sql, complete_pruned, messages_to_prompt
 from leenfrost.estimator import count_tokens_in_messages, count_tokens_in_text, estimate_conversation
 from leenfrost.metrics import compute_savings, summarize_gate
@@ -31,4 +33,6 @@ __all__ = [
     "lookup", "store", "cache_stats",
     "matrix_models", "estimate_cost_usd", "chat_completion",
     "messages_to_prompt", "build_complete_sql", "complete_pruned",
+    "memory_add", "memory_flush", "memory_search", "extract_memory_texts",
+    "rank_and_select", "memories_to_system_block", "MemoryROIResult",
 ]
