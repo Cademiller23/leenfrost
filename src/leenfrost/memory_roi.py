@@ -1,26 +1,28 @@
-"""Memory ROI Gate — admit EverOS memories only when value exceeds token cost."""
+"""Memory ROI gate — admit memory only when utility per token justifies cost."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Sequence
 
+from leenfrost.config import LeenfrostConfig, get_config
 from leenfrost.estimator import count_tokens_in_text
-from leenfrost.config import get_config
 
 
-@dataclass
+@dataclass(frozen=True)
 class MemoryCandidate:
     text: str
     score: float
+    tokens: int
+    roi: float
     source: str = ""
     id: str = ""
-    tokens: int = 0
-    roi: float = 0.0
 
 
 @dataclass
 class MemoryROIResult:
     returned: int
+    memories_admitted: int
     admitted: list[MemoryCandidate] = field(default_factory=list)
     rejected: list[MemoryCandidate] = field(default_factory=list)
     tokens_injected: int = 0
@@ -28,69 +30,74 @@ class MemoryROIResult:
     budget_tokens: int = 0
 
     @property
-    def memories_admitted(self) -> int:
-        return len(self.admitted)
+    def memory_admitted(self) -> int:
+        return self.memories_admitted
 
-    @property
-    def memories_rejected(self) -> int:
-        return len(self.rejected)
+
+def _severity_weight(severity: int) -> float:
+    s = max(1, min(10, int(severity)))
+    return 0.55 + (s / 10.0) * 0.45  # 0.55 .. 1.0
 
 
 def rank_and_select(
-    raw: list[dict],
+    candidates: Sequence[dict[str, Any]] | Sequence[str],
     *,
-    budget_tokens: int = 500,
+    budget_tokens: int | None = None,
     severity: int = 5,
-    min_roi: float = 0.0001,
+    config: LeenfrostConfig | None = None,
     model: str | None = None,
 ) -> MemoryROIResult:
-    """Score each memory, sort by ROI, fill budget."""
-    cfg = get_config()
-    model_name = model or cfg.default_model
-    severity_weight = 0.5 + (max(1, min(10, severity)) / 10.0)
+    """Select memories best-ROI-first until budget_tokens is exhausted.
 
-    candidates: list[MemoryCandidate] = []
-    for item in raw:
-        text = (item.get("text") or "").strip()
+    Default budget is config.memory_token_budget (200) — hard cap so demos
+    show admitted < returned instead of stuffing +487 tokens.
+    """
+    cfg = config or get_config()
+    budget = int(budget_tokens if budget_tokens is not None else getattr(cfg, "memory_token_budget", 200))
+    budget = max(0, budget)
+    model_name = model or cfg.default_model
+    sev_w = _severity_weight(severity)
+
+    normalized: list[MemoryCandidate] = []
+    for item in candidates:
+        if isinstance(item, str):
+            text = item.strip()
+            score = 0.5
+            source, cid = "", ""
+        else:
+            text = str(item.get("text") or "").strip()
+            score = float(item.get("score") or item.get("quality_score") or item.get("confidence") or 0.5)
+            source = str(item.get("source") or "")
+            cid = str(item.get("id") or "")
         if not text:
             continue
         tokens = max(1, count_tokens_in_text(text, model=model_name))
-        rel = max(0.01, float(item.get("score") or 0.5))
-        value = rel * severity_weight
-        roi = value / tokens
-        candidates.append(
-            MemoryCandidate(
-                text=text,
-                score=rel,
-                source=str(item.get("source") or ""),
-                id=str(item.get("id") or ""),
-                tokens=tokens,
-                roi=roi,
-            )
+        utility = max(0.0, min(1.0, score)) * sev_w
+        roi = utility / float(tokens)
+        normalized.append(
+            MemoryCandidate(text=text, score=score, tokens=tokens, roi=roi, source=source, id=cid)
         )
 
-    candidates.sort(key=lambda c: c.roi, reverse=True)
+    normalized.sort(key=lambda c: (-c.roi, c.tokens, -c.score))
 
     admitted: list[MemoryCandidate] = []
     rejected: list[MemoryCandidate] = []
     used = 0
-    for c in candidates:
-        if c.roi < min_roi:
-            rejected.append(c)
-            continue
-        if used + c.tokens <= budget_tokens:
+    for c in normalized:
+        if used + c.tokens <= budget:
             admitted.append(c)
             used += c.tokens
         else:
             rejected.append(c)
 
     return MemoryROIResult(
-        returned=len(candidates),
+        returned=len(normalized),
+        memories_admitted=len(admitted),
         admitted=admitted,
         rejected=rejected,
         tokens_injected=used,
         tokens_rejected=sum(c.tokens for c in rejected),
-        budget_tokens=budget_tokens,
+        budget_tokens=budget,
     )
 
 

@@ -1,3 +1,4 @@
+# WAVE1_ECONOMICS_V1: prune_savings_pct vs net_savings_pct; ROI budget via config
 """Leenfrost end-to-end gate: SCS → EverOS → Memory ROI → prune → budget → route."""
 
 from __future__ import annotations
@@ -29,6 +30,22 @@ from leenfrost.pruner import prune_conversation
 from leenfrost.router import route_model
 from leenfrost.signature import signature_summary
 
+
+
+def _economics(raw: int, after_prune: int, provider: int) -> dict:
+    raw = max(0, int(raw))
+    after_prune = max(0, int(after_prune))
+    provider = max(0, int(provider))
+    prune_pct = round(((raw - after_prune) / raw) * 100, 2) if raw else 0.0
+    net_pct = round(((raw - provider) / raw) * 100, 2) if raw else 0.0
+    return {
+        "tokens_after_prune": after_prune,
+        "prune_savings_pct": prune_pct,
+        "net_savings_pct": net_pct,
+        "savings_percent": net_pct,
+        "raw_tokens": raw,
+        "provider_prompt_tokens": provider,
+    }
 
 def _build_search_query(conversation: Conversation) -> str:
     parts: list[str] = []

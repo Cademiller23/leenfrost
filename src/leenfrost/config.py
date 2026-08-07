@@ -12,6 +12,7 @@ class LeenfrostConfig(BaseSettings):
     default_model: str = "deepseek/deepseek-v4-flash"
     fallback_encoding: str = "o200k_base"
     max_tokens_per_call: int = 8000
+    memory_token_budget: int = 200
     max_tokens_per_day: int = 500_000
     soft_limit_ratio: float = 0.80
     keep_last_n_turns: int = 4

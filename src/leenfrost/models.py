@@ -113,6 +113,9 @@ class GateResult(BaseModel):
     final_messages: list[Message]
     final_tokens: int
     tokens_saved: int
+    tokens_after_prune: int = 0
+    prune_savings_pct: float = 0.0
+    net_savings_pct: float = 0.0
     savings_percent: float
     estimated_cost_usd: float | None = None
     memory_returned: int = 0
