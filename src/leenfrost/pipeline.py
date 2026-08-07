@@ -246,7 +246,7 @@ def run_gate(
     )
 
     # Attach EverOS economics on the object if model allows extra fields; store via signature path
-    if use_scs and budget_decision.allowed:
+    if budget_decision.allowed:
         try:
             sig = signature_summary(conversation)
             store(conversation, result, artifacts=sig.get("artifacts_sample") or [])
