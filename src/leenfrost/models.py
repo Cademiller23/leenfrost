@@ -124,6 +124,9 @@ class GateResult(BaseModel):
     memory_tokens_rejected: int = 0
     scs_hit: bool = False
     scs_hit_kind: str = "none"
+    structure_hit: bool = False
+    template_tokens: int = 0
+    structure_template: str | None = None
     pnl_trace: list[str] = []
     raw_tokens: int = 0
     pruned_tokens_before_memory: int = 0

@@ -6,7 +6,7 @@ import os
 from typing import Any
 
 from leenfrost.budget import evaluate_budget
-from leenfrost.cache import lookup, store
+from leenfrost.cache import lookup, lookup_structure, store, build_structure_template
 from leenfrost.config import LeenfrostConfig, get_config
 from leenfrost.estimator import estimate_conversation
 from leenfrost.everos import extract_memory_texts, memory_search
@@ -152,6 +152,35 @@ def run_gate(
             _maybe_log(result, conversation)
             return result
 
+
+    # --- 1b) Structure-hash template reuse (NOT $0) ---
+    structure_hit = False
+    structure_template: str | None = None
+    template_tokens = 0
+    if use_scs:
+        try:
+            st_hit = lookup_structure(conversation)
+        except Exception:
+            st_hit = None
+        if st_hit is not None and st_hit.hit_kind == "structure":
+            structure_hit = True
+            structure_template = st_hit.template or build_structure_template()
+            from leenfrost.estimator import count_tokens_in_text
+            try:
+                template_tokens = count_tokens_in_text(
+                    structure_template, model=cfg.default_model
+                )
+            except TypeError:
+                template_tokens = count_tokens_in_text(structure_template)
+            # Inject as system note; model still runs bound to CURRENT IOCs
+            work_messages_seed = [
+                Message(role=Role.SYSTEM, content=structure_template),
+            ]
+        else:
+            work_messages_seed = []
+    else:
+        work_messages_seed = []
+
     # --- 2) EverOS search + ROI (miss path) ---
     mem_returned = 0
     mem_admitted = 0
@@ -159,7 +188,7 @@ def run_gate(
     mem_rej = 0
     memory_block: str | None = None
     everos_meta: dict[str, Any] = {"everos_ok": False}
-    work_messages: list[Message] = list(conversation.messages)
+    work_messages: list[Message] = list(work_messages_seed) + list(conversation.messages)
 
     if use_everos:
         try:
@@ -222,6 +251,7 @@ def run_gate(
     pnl = [
         f"RAW {original.total_tokens}",
         f"EVEROS returned {mem_returned} / admitted {mem_admitted} (+{mem_inj} tok)",
+        (f"STRUCTURE hit template_tokens={template_tokens}" if structure_hit else "STRUCTURE miss"),
         f"WORKING_SET {pre_prune_tokens}",
         f"PRUNE → {final_tokens} ({prune_pct}%)",
         f"NET vs raw {net_pct}%",
@@ -249,6 +279,9 @@ def run_gate(
         memory_tokens_rejected=mem_rej,
         scs_hit=False,
         scs_hit_kind="none",
+        structure_hit=structure_hit,
+        template_tokens=template_tokens,
+        structure_template=structure_template,
         pnl_trace=pnl,
     )
 
@@ -260,6 +293,10 @@ def run_gate(
                 conversation,
                 result,
                 artifacts=sig.get("artifacts_sample") or [],
+                template=build_structure_template(
+                    classification="SOC structure from live triage",
+                    notes=f"priority={severity} model={route.selected_model}",
+                ),
             )
         except Exception:
             pass
