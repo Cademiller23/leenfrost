@@ -217,7 +217,15 @@ def run_gate(
         max_tokens_per_day=500_000,
         remaining_daily_tokens=500_000,
     )
-    budget_decision = evaluate_budget(final_tokens, budget_cfg)
+    # Re-estimate pruned payload for budget (TokenEstimate, not raw int)
+    pruned_conv = Conversation(
+        messages=final_messages,
+        priority=conversation.priority,
+        agent_id=conversation.agent_id,
+        id=conversation.id,
+    )
+    token_est = estimate_conversation(pruned_conv, model=cfg.default_model, config=cfg)
+    budget_decision = evaluate_budget(token_est, budget_cfg, config=cfg)
     route = route_model(severity, budget_decision, config=cfg)
 
     tokens_saved, savings_percent, cost_saved = compute_savings(
