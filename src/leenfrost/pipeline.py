@@ -133,23 +133,41 @@ def run_gate(
     if use_scs:
         hit = lookup(conversation)
         if hit is not None:
-            # Reconstruct a GateResult-shaped outcome from cache without model spend
+            # Exact evidence hit: do NOT bill a model. Do NOT surface prior pruned
+            # payload size as this call's final_tokens (that confused Original 725 → Final 1035).
+            from leenfrost.models import (
+                BudgetDecision,
+                EnforcementAction,
+                RouteDecision,
+                ModelTier,
+            )
+
             original = estimate_conversation(conversation, config=cfg)
-            # Build minimal messages from cache is not stored as full text in all versions;
-            # use original conversation pruned path skipped — report cache economics.
-            tokens_saved = max(0, hit.original_tokens - hit.final_tokens)
-            pct = round(100.0 * tokens_saved / hit.original_tokens, 2) if hit.original_tokens else 0.0
-            # Fall through to a synthetic allow decision for API stability
-            from leenfrost.models import BudgetDecision, EnforcementAction, RouteDecision, ModelTier
+            model_tokens = 0
+            tokens_saved = original.total_tokens
+            savings_percent = 100.0 if original.total_tokens > 0 else 0.0
 
             budget_decision = BudgetDecision(
                 allowed=True,
                 action=EnforcementAction.ALLOW,
-                reason="SCS exact evidence hit — model path bypassed",
-                estimated_tokens=hit.final_tokens,
+                reason="SCS exact evidence hit — model path bypassed ($0 model spend)",
+                estimated_tokens=0,
                 remaining_daily=budget.remaining_daily_tokens if budget else 0,
                 soft_limit_hit=False,
             )
+            # BudgetDecision field names vary; fall back if constructor rejects
+            try:
+                budget_decision = BudgetDecision(
+                    allowed=True,
+                    action=EnforcementAction.ALLOW,
+                    reason="SCS exact evidence hit — model path bypassed ($0 model spend)",
+                    estimated_tokens=0,
+                    remaining_daily=budget.remaining_daily_tokens if budget else 0,
+                    soft_limit_hit=False,
+                )
+            except Exception:
+                budget_decision = evaluate_budget(original, budget, config=cfg)
+
             route = RouteDecision(
                 selected_tier=ModelTier.ECONOMY,
                 selected_model="scs-cache-bypass",
@@ -157,6 +175,7 @@ def run_gate(
                 priority=severity,
                 forced_by_budget=False,
             )
+
             return GateResult(
                 conversation_id=conversation.id,
                 original_estimate=original,
@@ -164,17 +183,22 @@ def run_gate(
                 budget=budget_decision,
                 route=route,
                 final_messages=list(conversation.messages),
-                final_tokens=hit.final_tokens,
+                final_tokens=model_tokens,
                 tokens_saved=tokens_saved,
-                savings_percent=pct if pct else hit.savings_pct,
+                savings_percent=savings_percent,
                 estimated_cost_usd=0.0,
+                memory_returned=0,
+                memory_admitted=0,
+                memory_tokens_injected=0,
+                memory_tokens_rejected=0,
                 scs_hit=True,
                 scs_hit_kind=getattr(hit, "hit_kind", "exact"),
                 pnl_trace=[
                     f"RAW {original.total_tokens}",
-                    "SCS EXACT HIT",
+                    "SCS EXACT EVIDENCE HIT",
                     "MODEL TOKENS 0",
                     "MODEL COST $0",
+                    "MEMORY ROI SKIPPED (exact hit)",
                 ],
             )
 
