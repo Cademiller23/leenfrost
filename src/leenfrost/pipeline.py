@@ -199,7 +199,17 @@ def run_gate(
     original_estimate = estimate_conversation(enriched, config=cfg)
 
     pruned_result = prune_conversation(enriched, config=cfg)
-    final_messages = list(pruned_result.messages)
+    if hasattr(pruned_result, "final_messages"):
+        final_messages = list(pruned_result.final_messages)
+    elif hasattr(pruned_result, "messages"):
+        final_messages = list(pruned_result.messages)
+    elif hasattr(pruned_result, "pruned_messages"):
+        final_messages = list(pruned_result.pruned_messages)
+    else:
+        raise AttributeError(
+            f"PruneResult fields={list(type(pruned_result).model_fields)} "
+            "— expected final_messages/messages/pruned_messages"
+        )
     final_tokens = pruned_result.final_tokens
 
     budget_cfg = budget or BudgetConfig(
