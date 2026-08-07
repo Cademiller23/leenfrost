@@ -1,4 +1,4 @@
-"""OpenRouter pricing matrix for Leenfrost (no Claude in v1 matrix)."""
+"""OpenRouter client — live probes only for verified model ids."""
 
 from __future__ import annotations
 
@@ -9,27 +9,23 @@ import httpx
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Models from the competition matrix (Claude intentionally omitted for now)
+# Verified live in this hackathon run (Muse removed after 403)
 DEFAULT_MODELS = [
     "openai/gpt-5.5",
     "minimax/minimax-m3",
     "qwen/qwen3.6-35b-a3b",
     "moonshotai/kimi-k2-0905",
-    "meta/muse-spark-1.2",
     "nvidia/nemotron-3-ultra-550b-a55b",
     "deepseek/deepseek-v4-flash",
 ]
 
-# Input USD per 1M tokens (from OpenRouter provider cards you captured)
 COST_PER_MILLION_INPUT: dict[str, float] = {
     "openai/gpt-5.5": 2.50,
     "minimax/minimax-m3": 0.30,
     "qwen/qwen3.6-35b-a3b": 0.10,
     "moonshotai/kimi-k2-0905": 0.60,
-    "meta/muse-spark-1.2": 1.25,
     "nvidia/nemotron-3-ultra-550b-a55b": 0.50,
     "deepseek/deepseek-v4-flash": 0.14,
-    "deepseek/deepseek-chat": 0.14,
 }
 
 

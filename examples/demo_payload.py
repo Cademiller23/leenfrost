@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Leenfrost demo — bloated cyber-agent workload that produces real cost reduction."""
+"""Leenfrost demo — bloated cyber SOC workload (no finance language)."""
 
 from __future__ import annotations
 import sys
@@ -24,7 +24,7 @@ def build() -> Conversation:
             Message(role=Role.ASSISTANT, content="Hello! Ready to triage."),
             Message(role=Role.USER, content="Okay, thanks."),
             Message(role=Role.ASSISTANT, content="Standing by."),
-            Message(role=Role.SYSTEM, content=SYSTEM),  # duplicate — must be pruned
+            Message(role=Role.SYSTEM, content=SYSTEM),
             Message(role=Role.USER, content="Sure, let's begin."),
             Message(role=Role.USER, content=(
                 "Triage alert cluster AC-9182. Host WIN-ENG-04 executed "
@@ -41,7 +41,7 @@ def build() -> Conversation:
             )),
             Message(role=Role.USER, content="Got it, thanks."),
             Message(role=Role.ASSISTANT, content="Acknowledged."),
-            Message(role=Role.SYSTEM, content=SYSTEM),  # another duplicate
+            Message(role=Role.SYSTEM, content=SYSTEM),
             Message(role=Role.USER, content="Please continue."),
             Message(role=Role.USER, content=(
                 "Correlate with identity events. Did the same user account "
@@ -56,7 +56,9 @@ def build() -> Conversation:
             )),
             Message(role=Role.USER, content="Perfect."),
             Message(role=Role.ASSISTANT, content="Ready for next step."),
-            Message(role=Role.USER, content="One more thing — any lateral movement to the finance subnet?"),
+            Message(role=Role.USER, content=(
+                "One more thing — any lateral movement into the 10.40.0.0/16 server VLAN?"
+            )),
             Message(role=Role.ASSISTANT, content=(
                 "No successful lateral movement into 10.40.0.0/16 yet. "
                 "Two RDP attempts from WIN-ENG-04 to 10.40.12.8 were blocked by "
@@ -71,13 +73,9 @@ if __name__ == "__main__":
     conv = build()
     result = run_gate(conv)
     print("=" * 60)
-    print("LEENFROST DEMO — COST OF INTELLIGENCE (CYBER)")
+    print("LEENFROST DEMO — CYBER SOC")
     print("=" * 60)
     for k, v in summarize_gate(result).items():
         print(f"  {k:22s}: {v}")
-    print(f"\n  Tokens saved         : {result.tokens_saved}")
-    print(f"  Savings              : {result.savings_percent}%")
-    if result.pruned:
-        print(f"  Strategy             : {result.pruned.strategy}")
-        print(f"  Messages             : {len(result.final_messages)} / {len(conv.messages)}")
+    print(f"\n  Tokens saved: {result.tokens_saved} ({result.savings_percent}%)")
     print("=" * 60)
