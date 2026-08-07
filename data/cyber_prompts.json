@@ -1,0 +1,162 @@
+[
+  {
+    "id": "ac-9182",
+    "severity": 9,
+    "title": "Encoded PowerShell via Outlook parent",
+    "messages": [
+      {"role": "system", "content": "You are a senior detection engineer agent. Cite event IDs, process hashes, and MITRE ATT&CK techniques. Never invent indicators."},
+      {"role": "user", "content": "Hi."},
+      {"role": "assistant", "content": "Ready."},
+      {"role": "system", "content": "You are a senior detection engineer agent. Cite event IDs, process hashes, and MITRE ATT&CK techniques. Never invent indicators."},
+      {"role": "user", "content": "Triage AC-9182. WIN-ENG-04 ran powershell.exe encoded. Parent outlook.exe. Match C2 or T1059.001. List top related hashes."},
+      {"role": "assistant", "content": "High confidence T1059.001. Payload contacts 185.234.72.19. Hashes: a3f2c91b, 91bb0e44, 4c11d8e2. Isolate host. Block IP."},
+      {"role": "user", "content": "Thanks."},
+      {"role": "user", "content": "Any MFA failures for the same user in 6h? Give event IDs."}
+    ]
+  },
+  {
+    "id": "lat-2201",
+    "severity": 8,
+    "title": "RDP lateral movement attempts",
+    "messages": [
+      {"role": "system", "content": "You are a SOC correlation agent. Preserve IPs, hostnames, and MITRE techniques. Be precise."},
+      {"role": "user", "content": "Okay."},
+      {"role": "system", "content": "You are a SOC correlation agent. Preserve IPs, hostnames, and MITRE techniques. Be precise."},
+      {"role": "user", "content": "WIN-ENG-04 attempted RDP to 10.40.12.8 twice. Were they blocked? Technique?"},
+      {"role": "assistant", "content": "Both blocked by host firewall. Events NET-8821, NET-8824. Maps to T1021.001. No success into 10.40.0.0/16."},
+      {"role": "user", "content": "Got it."},
+      {"role": "user", "content": "Check if 10.40.12.8 is a domain controller."}
+    ]
+  },
+  {
+    "id": "dns-4410",
+    "severity": 7,
+    "title": "Suspicious DNS beaconing",
+    "messages": [
+      {"role": "system", "content": "You are a network detection agent. Always return domains, query counts, and TTPs."},
+      {"role": "user", "content": "Hi there."},
+      {"role": "system", "content": "You are a network detection agent. Always return domains, query counts, and TTPs."},
+      {"role": "user", "content": "Host 10.20.5.33 queried xyz-cdn-update[.]com 140 times in 30m. Beacon?"},
+      {"role": "assistant", "content": "Likely beacon. Interval ~13s. Domain first seen today. Aligns with T1071.004. Recommend sinkhole + EDR scan."},
+      {"role": "user", "content": "Perfect."}
+    ]
+  },
+  {
+    "id": "ident-330",
+    "severity": 9,
+    "title": "OAuth grant after MFA failures",
+    "messages": [
+      {"role": "system", "content": "You are an identity threat agent. Cite exact event IDs and timestamps. Never invent users."},
+      {"role": "user", "content": "Sure."},
+      {"role": "system", "content": "You are an identity threat agent. Cite exact event IDs and timestamps. Never invent users."},
+      {"role": "user", "content": "j.park@corp failed MFA three times then new OAuth grant DataSync-Helper. Correlate."},
+      {"role": "assistant", "content": "Events ID-44102, ID-44107, ID-44111 (MFA fail 14:02-14:04 UTC). OAuth grant ID-44130 at 14:06. High risk consent grant pattern."},
+      {"role": "user", "content": "Thanks."},
+      {"role": "user", "content": "Revoke grant and force password reset?"}
+    ]
+  },
+  {
+    "id": "malware-77",
+    "severity": 10,
+    "title": "Cobalt Strike beacon hash",
+    "messages": [
+      {"role": "system", "content": "You are a malware analysis agent. Preserve SHA256, C2, and MITRE. No speculation without evidence."},
+      {"role": "user", "content": "Hello."},
+      {"role": "system", "content": "You are a malware analysis agent. Preserve SHA256, C2, and MITRE. No speculation without evidence."},
+      {"role": "user", "content": "SHA256 e3b0c44298fc1c149afbf4c8996fb924 matched memory on SRV-APP-02. Cobalt?"},
+      {"role": "assistant", "content": "Hash is placeholder empty-file; treat as test IOC. If real CS beacon, expect T1071 + T1001. Request live hash from EDR."},
+      {"role": "user", "content": "Okay."}
+    ]
+  },
+  {
+    "id": "exfil-901",
+    "severity": 9,
+    "title": "Large egress to rare ASN",
+    "messages": [
+      {"role": "system", "content": "You are an exfiltration detection agent. Cite bytes, destinations, and techniques."},
+      {"role": "user", "content": "Hi."},
+      {"role": "system", "content": "You are an exfiltration detection agent. Cite bytes, destinations, and techniques."},
+      {"role": "user", "content": "SRV-DB-01 sent 12.4GB to 45.77.98.12 in 20m. Rare ASN. Exfil?"},
+      {"role": "assistant", "content": "Volume and rarity support T1041 suspicion. 45.77.98.12 ASN 20473. Recommend capture + block egress."},
+      {"role": "user", "content": "Continue."}
+    ]
+  },
+  {
+    "id": "phish-55",
+    "severity": 6,
+    "title": "Credential harvest link click",
+    "messages": [
+      {"role": "system", "content": "You are a phishing response agent. Preserve URLs, users, and times."},
+      {"role": "user", "content": "Thanks."},
+      {"role": "system", "content": "You are a phishing response agent. Preserve URLs, users, and times."},
+      {"role": "user", "content": "User clicked https://login-corp-secure[.]net/oauth. Password entered?"},
+      {"role": "assistant", "content": "Click confirmed. No password post in proxy logs yet. Reset session tokens. T1566.002."},
+      {"role": "user", "content": "Got it."}
+    ]
+  },
+  {
+    "id": "wmi-12",
+    "severity": 8,
+    "title": "WMI remote execution",
+    "messages": [
+      {"role": "system", "content": "You are a lateral movement analyst. Cite processes, hosts, and ATT&CK."},
+      {"role": "user", "content": "Okay."},
+      {"role": "system", "content": "You are a lateral movement analyst. Cite processes, hosts, and ATT&CK."},
+      {"role": "user", "content": "wmiprvse.exe spawned on DC01 from WIN-ENG-04. T1047?"},
+      {"role": "assistant", "content": "Yes T1047. Source WIN-ENG-04, target DC01. Correlate with prior PowerShell AC-9182."},
+      {"role": "user", "content": "Perfect."}
+    ]
+  },
+  {
+    "id": "cloud-88",
+    "severity": 7,
+    "title": "Anomalous IAM key creation",
+    "messages": [
+      {"role": "system", "content": "You are a cloud detection agent. Preserve account IDs, key IDs, and regions."},
+      {"role": "user", "content": "Hi there."},
+      {"role": "system", "content": "You are a cloud detection agent. Preserve account IDs, key IDs, and regions."},
+      {"role": "user", "content": "Access key AKIA… created in us-east-1 for role TempAdmin. Expected?"},
+      {"role": "assistant", "content": "No change ticket found. Treat as T1078.004 until proven. Disable key, alert owner."},
+      {"role": "user", "content": "Thanks."}
+    ]
+  },
+  {
+    "id": "ransom-3",
+    "severity": 10,
+    "title": "Mass file rename note",
+    "messages": [
+      {"role": "system", "content": "You are a ransomware response agent. Preserve extensions, paths, and ransom notes."},
+      {"role": "user", "content": "Sure."},
+      {"role": "system", "content": "You are a ransomware response agent. Preserve extensions, paths, and ransom notes."},
+      {"role": "user", "content": "2000 files on FILE-07 renamed .locked. Note RECOVER.txt. Contain?"},
+      {"role": "assistant", "content": "Isolate FILE-07 immediately. Snapshot volumes. Do not pay. Collect RECOVER.txt hash."},
+      {"role": "user", "content": "On it."}
+    ]
+  },
+  {
+    "id": "vpn-61",
+    "severity": 5,
+    "title": "Impossible travel VPN login",
+    "messages": [
+      {"role": "system", "content": "You are an identity analytics agent. Cite geos, times, and user IDs."},
+      {"role": "user", "content": "Hello."},
+      {"role": "system", "content": "You are an identity analytics agent. Cite geos, times, and user IDs."},
+      {"role": "user", "content": "User m.chen VPN from London 10:01 and Tokyo 10:18. Impossible travel?"},
+      {"role": "assistant", "content": "Yes. 17 minutes intercontinental. Force re-auth. Review session list."},
+      {"role": "user", "content": "Okay."}
+    ]
+  },
+  {
+    "id": "supply-19",
+    "severity": 8,
+    "title": "Suspicious package install",
+    "messages": [
+      {"role": "system", "content": "You are a supply-chain detection agent. Preserve package names, versions, and hashes."},
+      {"role": "user", "content": "Hi."},
+      {"role": "system", "content": "You are a supply-chain detection agent. Preserve package names, versions, and hashes."},
+      {"role": "user", "content": "npm install left-pad-helper@9.9.9 on CI runner. Typosquat?"},
+      {"role": "assistant", "content": "Name mimics left-pad. 9.9.9 not in official registry baseline. Quarantine artifact. T1195.001."},
+      {"role": "user", "content": "Thanks."}
+    ]
+  }
+]
