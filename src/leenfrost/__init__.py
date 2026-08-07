@@ -11,6 +11,7 @@ from leenfrost.models import (
 from leenfrost.pipeline import run_gate
 from leenfrost.pruner import prune_conversation
 from leenfrost.router import route_model
+from leenfrost.snowflake_logger import fetch_recent_usage, log_gate_result
 
 __version__ = "0.1.0"
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "count_tokens_in_text", "count_tokens_in_messages", "estimate_conversation",
     "prune_conversation", "evaluate_budget", "route_model",
     "compute_savings", "summarize_gate", "run_gate",
+    "log_gate_result", "fetch_recent_usage",
 ]
