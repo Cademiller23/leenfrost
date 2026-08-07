@@ -1,10 +1,9 @@
 """EverOS Memory API v2 client for Leenfrost.
 
-Cloud: https://api.evermind.ai
-Auth: Authorization: Bearer <EVEROS_API_KEY>
-
-Soft-fail: network/API errors raise EverOSError only when strict=True;
-callers in the gate use strict=False and continue without memory.
+Live contract:
+  SEARCH: query + exactly one of user_id|agent_id; no session_id.
+  ADD: session_id + user_id + messages with role, content, sender_id, timestamp(int64 ms).
+  FLUSH: session_id + user_id.
 """
 
 from __future__ import annotations
@@ -45,22 +44,68 @@ def _user_id() -> str:
     return os.environ.get("EVEROS_USER_ID") or "soc-analyst-1"
 
 
+def _ts_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def memory_search(
+    query: str,
+    *,
+    user_id: str | None = None,
+    agent_id: str | None = None,
+    top_k: int = 12,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    url = f"{_base()}/api/v2/memory/search"
+    body: dict[str, Any] = {"query": query, "top_k": top_k}
+    if agent_id is not None and user_id is None:
+        body["agent_id"] = agent_id
+    else:
+        body["user_id"] = user_id or _user_id()
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(url, headers=_headers(), json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
 def memory_add(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     session_id: str,
     user_id: str | None = None,
     agent_id: str | None = None,
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    """POST /api/v2/memory/add — persist conversation turns for extraction."""
     url = f"{_base()}/api/v2/memory/add"
-    body = {
-        "session_id": session_id,
-        "agent_id": agent_id or _agent_id(),
-        "user_id": user_id or _user_id(),
-        "messages": messages,
-    }
+    uid = user_id or _user_id()
+    aid = agent_id or _agent_id()
+    base_ts = _ts_ms()
+    normalized: list[dict[str, Any]] = []
+    for i, m in enumerate(messages):
+        role = str(m.get("role") or "user")
+        content = str(m.get("content") or "")
+        if not content.strip():
+            continue
+        sender = str(m.get("sender_id") or (uid if role in ("user", "human") else aid))
+        ts = m.get("timestamp")
+        if ts is None:
+            ts = base_ts + i
+        else:
+            ts = int(ts)
+            # if someone passed seconds, expand to ms
+            if ts < 10_000_000_000:
+                ts = ts * 1000
+        normalized.append(
+            {
+                "role": role,
+                "content": content,
+                "sender_id": sender,
+                "timestamp": ts,
+            }
+        )
+    if not normalized:
+        raise EverOSError("memory_add: no messages after normalization")
+    body = {"session_id": session_id, "user_id": uid, "messages": normalized}
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=_headers(), json=body)
         resp.raise_for_status()
@@ -74,38 +119,12 @@ def memory_flush(
     agent_id: str | None = None,
     timeout: float = 60.0,
 ) -> dict[str, Any]:
-    """POST /api/v2/memory/flush — force extraction so search can hit."""
     url = f"{_base()}/api/v2/memory/flush"
-    body = {
-        "session_id": session_id,
-        "agent_id": agent_id or _agent_id(),
-        "user_id": user_id or _user_id(),
-    }
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, headers=_headers(), json=body)
-        resp.raise_for_status()
-        return resp.json()
-
-
-def memory_search(
-    query: str,
-    *,
-    session_id: str | None = None,
-    user_id: str | None = None,
-    agent_id: str | None = None,
-    top_k: int = 12,
-    timeout: float = 30.0,
-) -> dict[str, Any]:
-    """POST /api/v2/memory/search — retrieve related prior incidents."""
-    url = f"{_base()}/api/v2/memory/search"
-    body: dict[str, Any] = {
-        "query": query,
-        "agent_id": agent_id or _agent_id(),
-        "user_id": user_id or _user_id(),
-        "top_k": top_k,
-    }
-    if session_id:
-        body["session_id"] = session_id
+    body: dict[str, Any] = {"session_id": session_id}
+    if agent_id is not None and user_id is None:
+        body["agent_id"] = agent_id
+    else:
+        body["user_id"] = user_id or _user_id()
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=_headers(), json=body)
         resp.raise_for_status()
@@ -113,47 +132,27 @@ def memory_search(
 
 
 def extract_memory_texts(search_payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize EverOS search payload into ROI candidate dicts."""
     data = search_payload.get("data") if isinstance(search_payload, dict) else None
     if data is None and isinstance(search_payload, dict):
         data = search_payload
     if not isinstance(data, dict):
         return []
-
     candidates: list[dict[str, Any]] = []
     for key in ("episodes", "profiles", "agent_cases", "agent_skills", "unprocessed_messages"):
-        items = data.get(key) or []
-        if not isinstance(items, list):
-            continue
-        for item in items:
+        for item in data.get(key) or []:
             if not isinstance(item, dict):
                 continue
-            text = (
-                item.get("content")
+            text = str(
+                item.get("summary")
+                or item.get("content")
                 or item.get("text")
-                or item.get("summary")
                 or item.get("memory")
                 or ""
-            )
-            text = str(text).strip()
+            ).strip()
             if not text:
                 continue
-            score = float(
-                item.get("score")
-                or item.get("quality_score")
-                or item.get("confidence")
-                or 0.5
-            )
-            candidates.append(
-                {
-                    "text": text,
-                    "score": score,
-                    "source": key,
-                    "id": str(item.get("id") or ""),
-                }
-            )
-
-    # Dedupe by prefix
+            score = float(item.get("score") or item.get("quality_score") or item.get("confidence") or 0.55)
+            candidates.append({"text": text, "score": score, "source": key, "id": str(item.get("id") or "")})
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for c in candidates:
@@ -165,10 +164,12 @@ def extract_memory_texts(search_payload: dict[str, Any]) -> list[dict[str, Any]]
     return unique
 
 
-def conversation_to_everos_messages(messages: list[Any]) -> list[dict[str, str]]:
-    """Convert Leenfrost Message objects or dicts to EverOS message list."""
-    out: list[dict[str, str]] = []
-    for m in messages:
+def conversation_to_everos_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    uid = _user_id()
+    aid = _agent_id()
+    base_ts = _ts_ms()
+    out: list[dict[str, Any]] = []
+    for i, m in enumerate(messages):
         if hasattr(m, "role") and hasattr(m, "content"):
             role = m.role.value if hasattr(m.role, "value") else str(m.role)
             content = str(m.content)
@@ -179,5 +180,17 @@ def conversation_to_everos_messages(messages: list[Any]) -> list[dict[str, str]]
             continue
         if not content.strip():
             continue
-        out.append({"role": role, "content": content})
+        sender = uid if role in ("user", "human") else aid
+        out.append(
+            {
+                "role": role,
+                "content": content,
+                "sender_id": sender,
+                "timestamp": base_ts + i,
+            }
+        )
     return out
+
+
+def messages_for_everos(messages: list[Any]) -> list[dict[str, Any]]:
+    return conversation_to_everos_messages(messages)

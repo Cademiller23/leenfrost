@@ -1,4 +1,3 @@
-# WAVE1_ECONOMICS_V1: prune_savings_pct vs net_savings_pct; ROI budget via config
 """Leenfrost end-to-end gate: SCS → EverOS → Memory ROI → prune → budget → route."""
 
 from __future__ import annotations
@@ -21,18 +20,21 @@ from leenfrost.memory_roi import MemoryROIResult, memories_to_system_block, rank
 from leenfrost.metrics import compute_savings
 from leenfrost.models import (
     BudgetConfig,
+    BudgetDecision,
     Conversation,
+    EnforcementAction,
     GateResult,
     Message,
+    ModelTier,
     Role,
+    RouteDecision,
 )
 from leenfrost.pruner import prune_conversation
 from leenfrost.router import route_model
 from leenfrost.signature import signature_summary
 
 
-
-def _economics(raw: int, after_prune: int, provider: int) -> dict:
+def _economics(raw: int, after_prune: int, provider: int) -> dict[str, Any]:
     raw = max(0, int(raw))
     after_prune = max(0, int(after_prune))
     provider = max(0, int(provider))
@@ -47,37 +49,50 @@ def _economics(raw: int, after_prune: int, provider: int) -> dict:
         "provider_prompt_tokens": provider,
     }
 
-def _build_search_query(conversation: Conversation) -> str:
-    parts: list[str] = []
-    for m in conversation.messages:
-        if m.role == Role.SYSTEM:
-            continue
-        parts.append(m.content)
-    text = " ".join(parts)
-    return text[:800] if text.strip() else "security incident triage"
+
+def _empty_roi(budget_tokens: int) -> MemoryROIResult:
+    return MemoryROIResult(
+        returned=0,
+        memories_admitted=0,
+        admitted=[],
+        rejected=[],
+        tokens_injected=0,
+        tokens_rejected=0,
+        budget_tokens=budget_tokens,
+    )
 
 
 def _fetch_everos_memories(
     conversation: Conversation,
     *,
-    severity: int,
-    memory_budget_tokens: int,
-) -> tuple[MemoryROIResult | None, str | None, dict[str, Any]]:
-    """Search EverOS and apply Memory ROI. Never raises — returns empty on failure."""
-    meta: dict[str, Any] = {"everos_ok": False}
+    budget_tokens: int,
+    config: LeenfrostConfig,
+) -> tuple[MemoryROIResult, str | None, dict[str, Any]]:
+    """Search EverOS and apply Memory ROI. Never raises — empty on failure."""
+    meta: dict[str, Any] = {
+        "everos_ok": False,
+        "memories_returned": 0,
+        "memories_admitted": 0,
+        "memory_tokens_injected": 0,
+        "memory_tokens_rejected": 0,
+    }
+    empty = _empty_roi(budget_tokens)
     if not os.environ.get("EVEROS_API_KEY"):
         meta["everos_skip"] = "EVEROS_API_KEY not set"
-        return None, None, meta
-
+        meta["log"] = "everos: skipped (no API key)"
+        return empty, None, meta
     try:
         user_id = os.environ.get("EVEROS_USER_ID", "soc-analyst-1")
-        query = _build_search_query(conversation)
-        raw = memory_search(query=query, user_id=user_id, top_k=8, method="hybrid")
-        candidates = extract_memory_texts(raw)
+        query_parts = [m.content for m in conversation.messages if m.role != Role.SYSTEM]
+        query = "\n".join(query_parts)[:1500] or "SOC triage"
+        session_id = str(conversation.agent_id or conversation.id)
+        raw = memory_search(query, user_id=user_id)
+        cands = extract_memory_texts(raw)
         roi = rank_and_select(
-            candidates,
-            budget_tokens=memory_budget_tokens,
-            severity=severity,
+            cands,
+            budget_tokens=budget_tokens,
+            severity=int(conversation.priority or 5),
+            config=config,
         )
         block = memories_to_system_block(roi)
         meta.update(
@@ -87,41 +102,109 @@ def _fetch_everos_memories(
                 "memories_admitted": roi.memories_admitted,
                 "memory_tokens_injected": roi.tokens_injected,
                 "memory_tokens_rejected": roi.tokens_rejected,
+                "log": (
+                    f"everos: returned={roi.returned} admitted={roi.memories_admitted} "
+                    f"injected={roi.tokens_injected} rejected_tok={roi.tokens_rejected}"
+                ),
             }
         )
         return roi, block, meta
     except Exception as e:
         meta["everos_error"] = f"{type(e).__name__}: {e}"
-        return None, None, meta
+        meta["log"] = f"everos: error {meta['everos_error']}"
+        return empty, None, meta
 
 
 def _writeback_everos(conversation: Conversation, result: GateResult) -> dict[str, Any]:
-    """Persist triage turn to EverOS for future ROI search."""
+    """Persist triage turn to EverOS for future ROI search. Soft-fail."""
     out: dict[str, Any] = {"writeback": False}
     if not os.environ.get("EVEROS_API_KEY"):
+        out["writeback_skip"] = "no key"
         return out
     try:
         user_id = os.environ.get("EVEROS_USER_ID", "soc-analyst-1")
-        session_id = f"gate-{conversation.id}"
-        # Compact writeback: system outcome + last user ask
-        user_bits = [m.content for m in conversation.messages if m.role == Role.USER]
-        last_user = user_bits[-1] if user_bits else "triage request"
-        summary = (
-            f"Leenfrost gated triage. tokens {result.original_estimate.total_tokens}"
-            f"→{result.final_tokens} ({result.savings_percent}% saved). "
-            f"model={result.route.selected_model} budget={result.budget.action.value}."
+        session_id = str(conversation.agent_id or conversation.id)
+        # Compact writeback: system note + conversation tail + outcome economics
+        outcome = (
+            f"Leenfrost triage outcome: savings={result.savings_percent}% "
+            f"final_tokens={result.final_tokens} model={result.route.selected_model} "
+            f"scs_hit={getattr(result, 'scs_hit', False)}"
         )
-        msgs = messages_for_everos(
-            [("user", last_user[:500]), ("assistant", summary)],
-            user_sender_id=user_id,
-        )
-        memory_add(session_id=session_id, messages=msgs, async_mode=False)
-        memory_flush(session_id=session_id)
+        base = list(conversation.messages)
+        base.append(Message(role=Role.ASSISTANT, content=outcome))
+        msgs = messages_for_everos(base)
+        memory_add(msgs, session_id=session_id, user_id=user_id)
+        memory_flush(session_id=session_id, user_id=user_id)
         out["writeback"] = True
         out["session_id"] = session_id
+        out["message_count"] = len(msgs)
+        return out
     except Exception as e:
         out["writeback_error"] = f"{type(e).__name__}: {e}"
-    return out
+        return out
+
+
+def _build_scs_hit_result(
+    conversation: Conversation,
+    original,
+    budget: BudgetConfig | None,
+    cfg: LeenfrostConfig,
+) -> GateResult:
+    """Exact evidence hit — $0 model path, memory skipped."""
+    try:
+        budget_decision = BudgetDecision(
+            allowed=True,
+            action=EnforcementAction.ALLOW,
+            reason="SCS exact evidence hit — model path bypassed ($0 model spend)",
+            estimated_tokens=0,
+            remaining_daily=budget.remaining_daily_tokens if budget else cfg.max_tokens_per_day,
+            soft_limit_hit=False,
+        )
+    except Exception:
+        budget_decision = evaluate_budget(original, budget, config=cfg)
+
+    route = RouteDecision(
+        selected_tier=ModelTier.ECONOMY,
+        selected_model="scs-cache-bypass",
+        reason="Exact SCS signature hit — $0 model spend",
+        priority=conversation.priority,
+        forced_by_budget=False,
+    )
+    econ = _economics(original.total_tokens, 0, 0)
+    econ["net_savings_pct"] = 100.0 if original.total_tokens > 0 else 0.0
+    econ["savings_percent"] = econ["net_savings_pct"]
+    econ["prune_savings_pct"] = 0.0
+
+    return GateResult(
+        conversation_id=conversation.id,
+        original_estimate=original,
+        pruned=None,
+        budget=budget_decision,
+        route=route,
+        final_messages=list(conversation.messages),
+        final_tokens=0,
+        tokens_saved=original.total_tokens,
+        savings_percent=econ["savings_percent"],
+        estimated_cost_usd=0.0,
+        tokens_after_prune=0,
+        prune_savings_pct=0.0,
+        net_savings_pct=econ["net_savings_pct"],
+        raw_tokens=original.total_tokens,
+        provider_prompt_tokens=0,
+        memory_returned=0,
+        memory_admitted=0,
+        memory_tokens_injected=0,
+        memory_tokens_rejected=0,
+        scs_hit=True,
+        scs_hit_kind="exact",
+        pnl_trace=[
+            f"RAW {original.total_tokens}",
+            "SCS EXACT HIT",
+            "MODEL TOKENS 0",
+            "MODEL COST $0",
+            "MEMORY ROI skipped (exact evidence)",
+        ],
+    )
 
 
 def run_gate(
@@ -131,188 +214,137 @@ def run_gate(
     config: LeenfrostConfig | None = None,
     use_everos: bool = True,
     use_scs: bool = True,
-    memory_budget_tokens: int = 500,
+    memory_budget_tokens: int | None = None,
     writeback: bool = True,
 ) -> GateResult:
     """Full control plane.
 
     Order:
       1. SCS exact evidence lookup → $0 bypass on hit
-      2. EverOS search + Memory ROI (optional inject)
+      2. EverOS search + Memory ROI (optional inject, budget-capped)
       3. Density prune
       4. Budget + severity route
-      5. Optional EverOS writeback
+      5. Store SCS entry
+      6. Optional EverOS writeback (non-hit, allowed)
     """
     cfg = config or get_config()
-    severity = conversation.priority
+    mem_budget = int(
+        memory_budget_tokens
+        if memory_budget_tokens is not None
+        else getattr(cfg, "memory_token_budget", 200)
+    )
 
-    # --- SCS Level-0 exact cache ---
+    original = estimate_conversation(conversation, config=cfg)
+
+    # --- 1) SCS Level-0 exact cache ---
     if use_scs:
         hit = lookup(conversation)
         if hit is not None:
-            # Exact evidence hit: do NOT bill a model. Do NOT surface prior pruned
-            # payload size as this call's final_tokens (that confused Original 725 → Final 1035).
-            from leenfrost.models import (
-                BudgetDecision,
-                EnforcementAction,
-                RouteDecision,
-                ModelTier,
-            )
+            return _build_scs_hit_result(conversation, original, budget, cfg)
 
-            original = estimate_conversation(conversation, config=cfg)
-            model_tokens = 0
-            tokens_saved = original.total_tokens
-            savings_percent = 100.0 if original.total_tokens > 0 else 0.0
-
-            budget_decision = BudgetDecision(
-                allowed=True,
-                action=EnforcementAction.ALLOW,
-                reason="SCS exact evidence hit — model path bypassed ($0 model spend)",
-                estimated_tokens=0,
-                remaining_daily=budget.remaining_daily_tokens if budget else 0,
-                soft_limit_hit=False,
-            )
-            # BudgetDecision field names vary; fall back if constructor rejects
-            try:
-                budget_decision = BudgetDecision(
-                    allowed=True,
-                    action=EnforcementAction.ALLOW,
-                    reason="SCS exact evidence hit — model path bypassed ($0 model spend)",
-                    estimated_tokens=0,
-                    remaining_daily=budget.remaining_daily_tokens if budget else 0,
-                    soft_limit_hit=False,
-                )
-            except Exception:
-                budget_decision = evaluate_budget(original, budget, config=cfg)
-
-            route = RouteDecision(
-                selected_tier=ModelTier.ECONOMY,
-                selected_model="scs-cache-bypass",
-                reason="Exact SCS signature hit — $0 model spend",
-                priority=severity,
-                forced_by_budget=False,
-            )
-
-            return GateResult(
-                conversation_id=conversation.id,
-                original_estimate=original,
-                pruned=None,
-                budget=budget_decision,
-                route=route,
-                final_messages=list(conversation.messages),
-                final_tokens=model_tokens,
-                model_tokens=0,
-                raw_tokens=original.total_tokens,
-                pruned_tokens_before_memory=0,
-                memory_injected_tokens=0,
-                provider_prompt_tokens=0,
-                tokens_saved=tokens_saved,
-                savings_percent=savings_percent,
-                estimated_cost_usd=0.0,
-                memory_returned=0,
-                memory_admitted=0,
-                memory_tokens_injected=0,
-                memory_tokens_rejected=0,
-                scs_hit=True,
-                scs_hit_kind=getattr(hit, "hit_kind", "exact"),
-                pnl_trace=[
-                    f"RAW {original.total_tokens}",
-                    "SCS EXACT EVIDENCE HIT",
-                    "MODEL TOKENS 0",
-                    "MODEL COST $0",
-                    "MEMORY ROI SKIPPED (exact hit)",
-                ],
-            )
-
-    # --- EverOS + Memory ROI ---
-    working_messages = list(conversation.messages)
-    everos_meta: dict[str, Any] = {}
+    # --- 2) EverOS + Memory ROI ---
+    everos_meta: dict[str, Any] = {
+        "everos_ok": False,
+        "memories_returned": 0,
+        "memories_admitted": 0,
+        "memory_tokens_injected": 0,
+        "memory_tokens_rejected": 0,
+        "log": "everos: skipped",
+    }
+    work_messages = list(conversation.messages)
     if use_everos:
-        roi, block, everos_meta = _fetch_everos_memories(
+        _roi, block, everos_meta = _fetch_everos_memories(
             conversation,
-            severity=severity,
-            memory_budget_tokens=memory_budget_tokens,
+            budget_tokens=mem_budget,
+            config=cfg,
         )
         if block:
-            working_messages = [
-                Message(role=Role.SYSTEM, content=block),
-                *working_messages,
-            ]
+            work_messages = [Message(role=Role.SYSTEM, content=block)] + work_messages
 
-    # Ensure Conversation validation (needs a non-system message)
-    if not any(m.role != Role.SYSTEM for m in working_messages):
-        working_messages.append(Message(role=Role.USER, content="."))
-
-    enriched = Conversation(
-        messages=working_messages,
+    # --- 3) Density prune ---
+    work_conv = Conversation(
+        messages=work_messages,
         priority=conversation.priority,
         agent_id=conversation.agent_id,
         id=conversation.id,
     )
+    pruned_result = prune_conversation(work_conv, config=cfg)
+    final_messages = list(pruned_result.pruned_messages)
+    final_tokens = int(pruned_result.pruned_tokens)
 
-    original_estimate = estimate_conversation(enriched, config=cfg)
+    # Pre-prune working set (history + admitted memory) for honest prune %
+    try:
+        pre_prune_tokens = count_tokens_in_messages(work_messages, model=cfg.default_model)
+    except TypeError:
+        pre_prune_tokens = count_tokens_in_messages(work_messages)
+    pre_prune_tokens = int(pre_prune_tokens)
 
-    pruned_result = prune_conversation(enriched, config=cfg)
-    if hasattr(pruned_result, "final_messages"):
-        final_messages = list(pruned_result.final_messages)
-    elif hasattr(pruned_result, "messages"):
-        final_messages = list(pruned_result.messages)
-    elif hasattr(pruned_result, "pruned_messages"):
-        final_messages = list(pruned_result.pruned_messages)
-    else:
-        raise AttributeError(
-            f"PruneResult fields={list(type(pruned_result).model_fields)} "
-            "— expected final_messages/messages/pruned_messages"
-        )
-    final_tokens = pruned_result.pruned_tokens
-
-    budget_cfg = budget or BudgetConfig(
-        max_tokens_per_call=cfg.max_tokens_per_call,
-        max_tokens_per_day=500_000,
-        remaining_daily_tokens=500_000,
+    # --- 4) Budget + route ---
+    token_est = estimate_conversation(
+        Conversation(
+            messages=final_messages,
+            priority=conversation.priority,
+            agent_id=conversation.agent_id,
+        ),
+        config=cfg,
     )
-    # Re-estimate pruned payload for budget (TokenEstimate, not raw int)
-    pruned_conv = Conversation(
-        messages=final_messages,
-        priority=conversation.priority,
-        agent_id=conversation.agent_id,
-        id=conversation.id,
-    )
-    token_est = estimate_conversation(pruned_conv, model=cfg.default_model, config=cfg)
+    budget_cfg = budget
     budget_decision = evaluate_budget(token_est, budget_cfg, config=cfg)
-    route = route_model(severity, budget_decision, config=cfg)
+    route = route_model(conversation.priority, budget_decision, config=cfg)
 
-    tokens_saved, savings_percent, cost_saved = compute_savings(
-        original_estimate, final_tokens, model=route.selected_model, config=cfg
-    )
+    # If rejected, still return economics for observability
+    tokens_saved = max(0, original.total_tokens - final_tokens)
+    econ = _economics(pre_prune_tokens, final_tokens, final_tokens)
+    # Also expose raw conversation baseline for net vs original user payload
+    net_vs_raw = _economics(original.total_tokens, final_tokens, final_tokens)
+    econ['raw_tokens'] = original.total_tokens
+    econ['net_savings_pct'] = net_vs_raw['net_savings_pct']
+    econ['savings_percent'] = econ['prune_savings_pct']  # headline = prune of working set
+    econ['tokens_after_prune'] = final_tokens
+
+    try:
+        cost_saved = compute_savings(
+            original, final_tokens, model=route.selected_model, config=cfg
+        )
+        if isinstance(cost_saved, tuple):
+            # older signature variants
+            cost_val = cost_saved[-1] if cost_saved else 0.0
+        else:
+            cost_val = float(cost_saved) if cost_saved is not None else 0.0
+    except Exception:
+        cost_val = 0.0
 
     mem_returned = int(everos_meta.get("memories_returned") or 0)
     mem_admitted = int(everos_meta.get("memories_admitted") or 0)
     mem_inj = int(everos_meta.get("memory_tokens_injected") or 0)
     mem_rej = int(everos_meta.get("memory_tokens_rejected") or 0)
-    raw_tok = original_estimate.total_tokens
+
     pnl = [
-        f"RAW {raw_tok}",
-        f"EVEROS returned {mem_returned} / admitted {mem_admitted}",
-        f"MEMORY ROI +{mem_inj} / rejected {mem_rej}",
-        f"PRUNE → {final_tokens}",
-        f"MODEL {route.selected_model}",
-        f"SAVED {tokens_saved} ({savings_percent}%)",
+        f"RAW {original.total_tokens}",
+        everos_meta.get("log")
+        or f"EVEROS returned {mem_returned} / admitted {mem_admitted}",
+        f"AFTER PRUNE {pruned_result.pruned_tokens} (prune_savings {econ['prune_savings_pct']}%)",
+        f"MEMORY ROI +{mem_inj} (rejected_tok {mem_rej})",
+        f"PROVIDER {final_tokens} (net_savings {econ['net_savings_pct']}%)",
+        f"ROUTE {route.selected_model}",
     ]
-    raw_tok = original_estimate.total_tokens
-    # provider_prompt_tokens = what would be sent to the model after prune (+ memory already in messages)
-    provider_prompt = final_tokens
+
     result = GateResult(
         conversation_id=conversation.id,
-        original_estimate=original_estimate,
+        original_estimate=original,
         pruned=pruned_result,
         budget=budget_decision,
         route=route,
         final_messages=final_messages,
         final_tokens=final_tokens,
         tokens_saved=tokens_saved,
-        savings_percent=savings_percent,
-        estimated_cost_usd=cost_saved,
+        savings_percent=econ["savings_percent"],
+        estimated_cost_usd=cost_val if isinstance(cost_val, (int, float)) else 0.0,
+        tokens_after_prune=econ["tokens_after_prune"],
+        prune_savings_pct=econ["prune_savings_pct"],
+        net_savings_pct=econ["net_savings_pct"],
+        raw_tokens=econ["raw_tokens"],
+        provider_prompt_tokens=econ["provider_prompt_tokens"],
         memory_returned=mem_returned,
         memory_admitted=mem_admitted,
         memory_tokens_injected=mem_inj,
@@ -320,28 +352,23 @@ def run_gate(
         scs_hit=False,
         scs_hit_kind="none",
         pnl_trace=pnl,
-        raw_tokens=raw_tok,
-        pruned_tokens_before_memory=getattr(pruned_result, "pruned_tokens", final_tokens) if pruned_result else final_tokens,
-        memory_injected_tokens=mem_inj,
-        provider_prompt_tokens=provider_prompt,
-        model_tokens=final_tokens,
     )
 
-    # Attach EverOS economics on the object if model allows extra fields; store via signature path
+    # --- 5) Always persist SCS entry on successful allow (so next turn can hit) ---
     if budget_decision.allowed:
         try:
             sig = signature_summary(conversation)
-            store(conversation, result, artifacts=sig.get("artifacts_sample") or [])
+            store(
+                conversation,
+                result,
+                artifacts=sig.get("artifacts_sample") or [],
+            )
         except Exception:
             pass
 
+    # --- 6) EverOS writeback ---
     if writeback and use_everos and budget_decision.allowed:
         wb = _writeback_everos(conversation, result)
         everos_meta.update(wb)
-
-    # Stash meta for dashboard via route.reason extension when useful
-    if everos_meta.get("everos_ok"):
-        # Non-breaking: reason already set; dashboard can call EverOS metrics separately
-        pass
 
     return result

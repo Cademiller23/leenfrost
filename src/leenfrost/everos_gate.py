@@ -1,17 +1,12 @@
-"""EverOS integration helpers for run_gate — search+ROI and writeback.
-
-All functions soft-fail: never raise into the request path unless strict=True.
-"""
+"""EverOS integration helpers — search+ROI and writeback. Soft-fail always."""
 
 from __future__ import annotations
 
-import time
 import uuid
 from typing import Any
 
 from leenfrost.config import LeenfrostConfig, get_config
 from leenfrost.everos import (
-    EverOSError,
     conversation_to_everos_messages,
     extract_memory_texts,
     memory_add,
@@ -23,11 +18,7 @@ from leenfrost.models import Message, Role
 
 
 def _query_from_messages(messages: list[Message], limit: int = 1200) -> str:
-    parts: list[str] = []
-    for m in messages:
-        if m.role == Role.SYSTEM:
-            continue
-        parts.append(m.content.strip())
+    parts = [m.content.strip() for m in messages if m.role != Role.SYSTEM]
     q = "\n".join(parts)
     return q[:limit] if len(q) > limit else q
 
@@ -36,11 +27,10 @@ def retrieve_and_price_memory(
     messages: list[Message],
     *,
     severity: int = 5,
-    session_id: str | None = None,
+    session_id: str | None = None,  # kept for API compat; NOT sent to search
     config: LeenfrostConfig | None = None,
     strict: bool = False,
 ) -> tuple[MemoryROIResult, str | None, dict[str, Any]]:
-    """Search EverOS + ROI. Returns (roi, system_block, meta)."""
     meta: dict[str, Any] = {
         "everos_ok": False,
         "everos_error": None,
@@ -49,6 +39,8 @@ def retrieve_and_price_memory(
         "injected": 0,
         "rejected_tok": 0,
     }
+    cfg = config or get_config()
+    budget = int(getattr(cfg, "memory_token_budget", 200))
     empty = MemoryROIResult(
         returned=0,
         memories_admitted=0,
@@ -56,19 +48,17 @@ def retrieve_and_price_memory(
         rejected=[],
         tokens_injected=0,
         tokens_rejected=0,
-        budget_tokens=int(getattr(config or get_config(), "memory_token_budget", 200)),
+        budget_tokens=budget,
     )
     try:
         q = _query_from_messages(messages)
         if not q.strip():
             return empty, None, meta
-        sid = session_id or f"soc-{uuid.uuid4().hex[:12]}"
-        raw = memory_search(q, session_id=sid)
+        raw = memory_search(q)  # user_id only — no session_id
         cands = extract_memory_texts(raw)
-        cfg = config or get_config()
         roi = rank_and_select(
             cands,
-            budget_tokens=int(getattr(cfg, "memory_token_budget", 200)),
+            budget_tokens=budget,
             severity=severity,
             config=cfg,
         )
@@ -80,7 +70,6 @@ def retrieve_and_price_memory(
                 "admitted": roi.memories_admitted,
                 "injected": roi.tokens_injected,
                 "rejected_tok": roi.tokens_rejected,
-                "session_id": sid,
                 "log": (
                     f"everos: returned={roi.returned} admitted={roi.memories_admitted} "
                     f"injected={roi.tokens_injected} rejected_tok={roi.tokens_rejected}"
@@ -90,6 +79,7 @@ def retrieve_and_price_memory(
         return roi, block, meta
     except Exception as e:
         meta["everos_error"] = f"{type(e).__name__}: {e}"
+        meta["log"] = f"everos: error {meta['everos_error']}"
         if strict:
             raise
         return empty, None, meta
@@ -101,7 +91,6 @@ def writeback_memory(
     session_id: str | None = None,
     strict: bool = False,
 ) -> dict[str, Any]:
-    """Persist full turn context to EverOS (add + flush). Save as much as possible."""
     meta: dict[str, Any] = {"writeback_ok": False, "error": None, "session_id": None}
     try:
         sid = session_id or f"soc-wb-{uuid.uuid4().hex[:12]}"
