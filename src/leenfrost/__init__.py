@@ -9,13 +9,14 @@ from leenfrost.models import (
     BudgetConfig, BudgetDecision, Conversation, EnforcementAction,
     GateResult, Message, ModelTier, PruneResult, Role, RouteDecision, TokenEstimate,
 )
+from leenfrost.openrouter import chat_completion, estimate_cost_usd, matrix_models
 from leenfrost.pipeline import run_gate
 from leenfrost.pruner import prune_conversation
 from leenfrost.router import route_model
 from leenfrost.signature import compute_signature, extract_artifacts, signature_summary
 from leenfrost.snowflake_logger import fetch_recent_usage, log_gate_result
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "__version__", "LeenfrostConfig", "get_config",
     "Role", "ModelTier", "EnforcementAction", "Message", "Conversation",
@@ -27,4 +28,5 @@ __all__ = [
     "log_gate_result", "fetch_recent_usage",
     "compute_signature", "extract_artifacts", "signature_summary",
     "lookup", "store", "cache_stats",
+    "matrix_models", "estimate_cost_usd", "chat_completion",
 ]
