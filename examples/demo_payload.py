@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Leenfrost demo — bloated agent workload that produces real cost reduction."""
+"""Leenfrost demo — bloated cyber-agent workload that produces real cost reduction."""
 
 from __future__ import annotations
 import sys
@@ -9,11 +9,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from leenfrost import Conversation, Message, Role, run_gate, summarize_gate
 
 SYSTEM = (
-    "You are a senior financial analyst agent operating inside Snowflake Cortex. "
-    "You have full access to SALES_FACT, CUSTOMER_DIM, PRODUCT_DIM, REGION_DIM, and EXCHANGE_RATES. "
-    "Always cite exact columns. Be precise with numbers, percentages, and currency. "
-    "Never invent data. Format large numbers with one decimal place and unit (e.g. $148.2M). "
-    "When comparing periods always show both absolute and percentage change."
+    "You are a senior detection engineer agent operating inside a SOC pipeline. "
+    "You have access to EDR telemetry, DNS logs, identity events, and threat intel. "
+    "Always cite exact event IDs, process hashes, and MITRE ATT&CK techniques. "
+    "Never invent indicators. Be precise with severity, confidence, and next actions. "
+    "When correlating alerts always show both the root event and the lateral movement path."
 )
 
 def build() -> Conversation:
@@ -21,53 +21,57 @@ def build() -> Conversation:
         messages=[
             Message(role=Role.SYSTEM, content=SYSTEM),
             Message(role=Role.USER, content="Hi there."),
-            Message(role=Role.ASSISTANT, content="Hello! How can I help you today?"),
+            Message(role=Role.ASSISTANT, content="Hello! Ready to triage."),
             Message(role=Role.USER, content="Okay, thanks."),
-            Message(role=Role.ASSISTANT, content="You're welcome. Ready when you are."),
+            Message(role=Role.ASSISTANT, content="Standing by."),
             Message(role=Role.SYSTEM, content=SYSTEM),  # duplicate — must be pruned
             Message(role=Role.USER, content="Sure, let's begin."),
             Message(role=Role.USER, content=(
-                "Pull Q3 2025 revenue for the APAC region broken down by country and "
-                "product category. Flag any country with >8% sequential decline. "
-                "Also list the top 5 Software SKUs by revenue."
+                "Triage alert cluster AC-9182. Host WIN-ENG-04 executed "
+                "powershell.exe with encoded command. Parent was outlook.exe. "
+                "Flag any match to known C2 domains or MITRE T1059.001. "
+                "Also list the top 5 related process hashes from the last 24h."
             )),
             Message(role=Role.ASSISTANT, content=(
-                "APAC Q3 2025 revenue was $148.2M (+11.4% YoY). "
-                "Japan $62.1M, Australia $41.3M, Singapore $22.8M, Rest of APAC $22.0M. "
-                "Categories: Hardware 48%, Software 31%, Services 21%. "
-                "No country exceeded an 8% sequential decline. "
-                "Top Software SKUs: SKU-8821 ($4.1M), SKU-4402 ($3.7M), SKU-9910 ($3.2M), "
-                "SKU-1103 ($2.9M), SKU-7744 ($2.6M)."
+                "AC-9182 is high confidence. Encoded PowerShell matches T1059.001. "
+                "Decoded payload contacts 185.234.72.19 (known C2, confidence 0.91). "
+                "Parent chain: outlook.exe → powershell.exe → cmd.exe. "
+                "Related hashes (24h): a3f2c9…, 91bb0e…, 4c11d8…, e7a90f…, 2b66c1…. "
+                "Recommend isolate WIN-ENG-04 and block 185.234.72.19."
             )),
             Message(role=Role.USER, content="Got it, thanks."),
-            Message(role=Role.ASSISTANT, content="Happy to help."),
+            Message(role=Role.ASSISTANT, content="Acknowledged."),
             Message(role=Role.SYSTEM, content=SYSTEM),  # another duplicate
             Message(role=Role.USER, content="Please continue."),
             Message(role=Role.USER, content=(
-                "Now compare the same breakdown to Q2 2025. Highlight the largest "
-                "absolute dollar movers and any country that declined more than 5% QoQ."
+                "Correlate with identity events. Did the same user account "
+                "fail MFA or create a new OAuth grant in the last 6 hours? "
+                "If yes, give the exact event IDs and timestamps."
             )),
             Message(role=Role.ASSISTANT, content=(
-                "Q2→Q3 movers: Japan +$6.8M, Australia +$3.1M, Singapore +$1.9M. "
-                "Largest absolute mover is Japan. No country declined more than 5% QoQ."
+                "Yes. User j.park@corp had 3 failed MFA challenges at 14:02–14:04 UTC "
+                "(events ID-44102, ID-44107, ID-44111). New OAuth grant created at "
+                "14:06 UTC for app 'DataSync-Helper' (event ID-44130). "
+                "This aligns with the PowerShell activity on WIN-ENG-04."
             )),
             Message(role=Role.USER, content="Perfect."),
-            Message(role=Role.ASSISTANT, content="Glad that was useful."),
-            Message(role=Role.USER, content="One more thing — can you also show the FX impact?"),
+            Message(role=Role.ASSISTANT, content="Ready for next step."),
+            Message(role=Role.USER, content="One more thing — any lateral movement to the finance subnet?"),
             Message(role=Role.ASSISTANT, content=(
-                "FX impact on APAC Q3 was approximately −$1.4M versus constant currency, "
-                "driven mainly by JPY weakness (−2.1%) and AUD softness (−1.3%)."
+                "No successful lateral movement into 10.40.0.0/16 yet. "
+                "Two RDP attempts from WIN-ENG-04 to 10.40.12.8 were blocked by "
+                "host firewall (events NET-8821, NET-8824). Continue monitoring."
             )),
         ],
-        priority=7,
-        agent_id="finance-apac-q3",
+        priority=8,
+        agent_id="soc-triage-ac9182",
     )
 
 if __name__ == "__main__":
     conv = build()
     result = run_gate(conv)
     print("=" * 60)
-    print("LEENFROST DEMO — COST OF INTELLIGENCE")
+    print("LEENFROST DEMO — COST OF INTELLIGENCE (CYBER)")
     print("=" * 60)
     for k, v in summarize_gate(result).items():
         print(f"  {k:22s}: {v}")
