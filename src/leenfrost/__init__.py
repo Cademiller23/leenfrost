@@ -14,6 +14,7 @@ from leenfrost.models import (
 )
 from leenfrost.openrouter import chat_completion, estimate_cost_usd, matrix_models
 from leenfrost.pipeline import run_gate
+from leenfrost.fleet import run_turn, run_fleet_benchmark, TurnEnvelope, FleetRow
 from leenfrost.pruner import prune_conversation
 from leenfrost.router import route_model
 from leenfrost.signature import compute_signature, extract_artifacts, signature_summary
@@ -27,7 +28,7 @@ __all__ = [
     "PruneResult", "GateResult",
     "count_tokens_in_text", "count_tokens_in_messages", "estimate_conversation",
     "prune_conversation", "evaluate_budget", "route_model",
-    "compute_savings", "summarize_gate", "run_gate",
+    "compute_savings", "summarize_gate", "run_gate", "run_turn", "run_fleet_benchmark", "TurnEnvelope", "FleetRow",
     "log_gate_result", "fetch_recent_usage",
     "compute_signature", "extract_artifacts", "signature_summary",
     "lookup", "store", "cache_stats",
