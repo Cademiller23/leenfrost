@@ -115,4 +115,11 @@ class GateResult(BaseModel):
     tokens_saved: int
     savings_percent: float
     estimated_cost_usd: float | None = None
+    memory_returned: int = 0
+    memory_admitted: int = 0
+    memory_tokens_injected: int = 0
+    memory_tokens_rejected: int = 0
+    scs_hit: bool = False
+    scs_hit_kind: str = "none"
+    pnl_trace: list[str] = []
     processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

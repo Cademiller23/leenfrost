@@ -168,6 +168,14 @@ def run_gate(
                 tokens_saved=tokens_saved,
                 savings_percent=pct if pct else hit.savings_pct,
                 estimated_cost_usd=0.0,
+                scs_hit=True,
+                scs_hit_kind=getattr(hit, "hit_kind", "exact"),
+                pnl_trace=[
+                    f"RAW {original.total_tokens}",
+                    "SCS EXACT HIT",
+                    "MODEL TOKENS 0",
+                    "MODEL COST $0",
+                ],
             )
 
     # --- EverOS + Memory ROI ---
@@ -232,6 +240,19 @@ def run_gate(
         original_estimate, final_tokens, model=route.selected_model, config=cfg
     )
 
+    mem_returned = int(everos_meta.get("memories_returned") or 0)
+    mem_admitted = int(everos_meta.get("memories_admitted") or 0)
+    mem_inj = int(everos_meta.get("memory_tokens_injected") or 0)
+    mem_rej = int(everos_meta.get("memory_tokens_rejected") or 0)
+    raw_tok = original_estimate.total_tokens
+    pnl = [
+        f"RAW {raw_tok}",
+        f"EVEROS returned {mem_returned} / admitted {mem_admitted}",
+        f"MEMORY ROI +{mem_inj} / rejected {mem_rej}",
+        f"PRUNE → {final_tokens}",
+        f"MODEL {route.selected_model}",
+        f"SAVED {tokens_saved} ({savings_percent}%)",
+    ]
     result = GateResult(
         conversation_id=conversation.id,
         original_estimate=original_estimate,
@@ -243,6 +264,13 @@ def run_gate(
         tokens_saved=tokens_saved,
         savings_percent=savings_percent,
         estimated_cost_usd=cost_saved,
+        memory_returned=mem_returned,
+        memory_admitted=mem_admitted,
+        memory_tokens_injected=mem_inj,
+        memory_tokens_rejected=mem_rej,
+        scs_hit=False,
+        scs_hit_kind="none",
+        pnl_trace=pnl,
     )
 
     # Attach EverOS economics on the object if model allows extra fields; store via signature path
