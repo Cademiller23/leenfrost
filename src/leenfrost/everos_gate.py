@@ -1,4 +1,4 @@
-"""EverOS integration helpers — search+ROI and writeback. Soft-fail always."""
+"""EverOS helpers — search+ROI and writeback. Soft-fail always."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def retrieve_and_price_memory(
     messages: list[Message],
     *,
     severity: int = 5,
-    session_id: str | None = None,  # kept for API compat; NOT sent to search
+    session_id: str | None = None,
     config: LeenfrostConfig | None = None,
     strict: bool = False,
 ) -> tuple[MemoryROIResult, str | None, dict[str, Any]]:
@@ -54,14 +54,9 @@ def retrieve_and_price_memory(
         q = _query_from_messages(messages)
         if not q.strip():
             return empty, None, meta
-        raw = memory_search(q)  # user_id only — no session_id
+        raw = memory_search(q)
         cands = extract_memory_texts(raw)
-        roi = rank_and_select(
-            cands,
-            budget_tokens=budget,
-            severity=severity,
-            config=cfg,
-        )
+        roi = rank_and_select(cands, budget_tokens=budget, severity=severity, config=cfg)
         block = memories_to_system_block(roi)
         meta.update(
             {
@@ -91,19 +86,19 @@ def writeback_memory(
     session_id: str | None = None,
     strict: bool = False,
 ) -> dict[str, Any]:
-    meta: dict[str, Any] = {"writeback_ok": False, "error": None, "session_id": None}
+    sid = (session_id or f"soc-wb-{uuid.uuid4().hex[:12]}").replace("/", "-").replace(" ", "-")[:64]
+    meta: dict[str, Any] = {"writeback_ok": False, "error": None, "session_id": sid}
     try:
-        sid = session_id or f"soc-wb-{uuid.uuid4().hex[:12]}"
         payload = conversation_to_everos_messages(messages)
-        if not payload:
-            meta["error"] = "no_messages"
+        # Prefer at least one user turn
+        if not any(m.get("role") == "user" for m in payload):
+            meta["error"] = "no_user_messages"
             return meta
         add_res = memory_add(payload, session_id=sid)
         flush_res = memory_flush(session_id=sid)
         meta.update(
             {
                 "writeback_ok": True,
-                "session_id": sid,
                 "add": add_res,
                 "flush": flush_res,
                 "message_count": len(payload),

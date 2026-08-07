@@ -1,10 +1,4 @@
-"""EverOS Memory API v2 client for Leenfrost.
-
-Live contract:
-  SEARCH: query + exactly one of user_id|agent_id; no session_id.
-  ADD: session_id + user_id + messages with role, content, sender_id, timestamp(int64 ms).
-  FLUSH: session_id + user_id.
-"""
+"""EverOS Memory API v2 client for Leenfrost."""
 
 from __future__ import annotations
 
@@ -64,7 +58,8 @@ def memory_search(
         body["user_id"] = user_id or _user_id()
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=_headers(), json=body)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise EverOSError(f"search {resp.status_code}: {resp.text[:500]}")
         return resp.json()
 
 
@@ -82,19 +77,24 @@ def memory_add(
     base_ts = _ts_ms()
     normalized: list[dict[str, Any]] = []
     for i, m in enumerate(messages):
-        role = str(m.get("role") or "user")
+        role = str(m.get("role") or "user").lower()
+        # EverOS chat roles: map system → user content prefix (system role often rejected)
         content = str(m.get("content") or "")
         if not content.strip():
             continue
-        sender = str(m.get("sender_id") or (uid if role in ("user", "human") else aid))
+        if role == "system":
+            role = "user"
+            content = f"[system] {content}"
+        if role not in ("user", "assistant", "tool"):
+            role = "user"
+        sender = str(m.get("sender_id") or (uid if role == "user" else aid))
         ts = m.get("timestamp")
         if ts is None:
             ts = base_ts + i
         else:
             ts = int(ts)
-            # if someone passed seconds, expand to ms
-            if ts < 10_000_000_000:
-                ts = ts * 1000
+            if ts < 1_000_000_000_000:
+                ts *= 1000
         normalized.append(
             {
                 "role": role,
@@ -105,10 +105,15 @@ def memory_add(
         )
     if not normalized:
         raise EverOSError("memory_add: no messages after normalization")
-    body = {"session_id": session_id, "user_id": uid, "messages": normalized}
+    body = {
+        "session_id": str(session_id)[:64],
+        "user_id": uid,
+        "messages": normalized,
+    }
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=_headers(), json=body)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise EverOSError(f"add {resp.status_code}: {resp.text[:500]}")
         return resp.json()
 
 
@@ -120,14 +125,15 @@ def memory_flush(
     timeout: float = 60.0,
 ) -> dict[str, Any]:
     url = f"{_base()}/api/v2/memory/flush"
-    body: dict[str, Any] = {"session_id": session_id}
+    body: dict[str, Any] = {"session_id": str(session_id)[:64]}
     if agent_id is not None and user_id is None:
         body["agent_id"] = agent_id
     else:
         body["user_id"] = user_id or _user_id()
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=_headers(), json=body)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise EverOSError(f"flush {resp.status_code}: {resp.text[:500]}")
         return resp.json()
 
 
@@ -151,8 +157,12 @@ def extract_memory_texts(search_payload: dict[str, Any]) -> list[dict[str, Any]]
             ).strip()
             if not text:
                 continue
-            score = float(item.get("score") or item.get("quality_score") or item.get("confidence") or 0.55)
-            candidates.append({"text": text, "score": score, "source": key, "id": str(item.get("id") or "")})
+            score = float(
+                item.get("score") or item.get("quality_score") or item.get("confidence") or 0.55
+            )
+            candidates.append(
+                {"text": text, "score": score, "source": key, "id": str(item.get("id") or "")}
+            )
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for c in candidates:
@@ -165,6 +175,7 @@ def extract_memory_texts(search_payload: dict[str, Any]) -> list[dict[str, Any]]
 
 
 def conversation_to_everos_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """Only user/assistant for writeback; system folded into user prefix."""
     uid = _user_id()
     aid = _agent_id()
     base_ts = _ts_ms()
@@ -180,10 +191,16 @@ def conversation_to_everos_messages(messages: list[Any]) -> list[dict[str, Any]]
             continue
         if not content.strip():
             continue
-        sender = uid if role in ("user", "human") else aid
+        role_l = role.lower()
+        if role_l == "system":
+            role_l = "user"
+            content = f"[system] {content}"
+        if role_l not in ("user", "assistant"):
+            role_l = "user"
+        sender = uid if role_l == "user" else aid
         out.append(
             {
-                "role": role,
+                "role": role_l,
                 "content": content,
                 "sender_id": sender,
                 "timestamp": base_ts + i,
