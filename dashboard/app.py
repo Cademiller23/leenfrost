@@ -8,11 +8,11 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 
-# Allow importing the package when run via streamlit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))  # so examples/ is importable
 
-from leenfrost import run_gate, log_gate_result, fetch_recent_usage, summarize_gate
+from leenfrost import run_gate, log_gate_result, fetch_recent_usage
 from examples.demo_payload import build
 
 st.set_page_config(
@@ -24,7 +24,6 @@ st.set_page_config(
 st.title("Leenfrost")
 st.caption("Token fiscal gateway · measurable cost reduction before the expensive call")
 
-# --- Run gate live ---
 col_run, col_meta = st.columns([1, 2])
 with col_run:
     if st.button("Run gate on demo workload", type="primary", use_container_width=True):
@@ -42,11 +41,10 @@ with col_meta:
         1. Estimated tokens of the outbound agent payload  
         2. Density-pruned context (system-prompt dedup + filler removal)  
         3. Budget check → model route  
-        4. Logged into usage store (Snowflake when available, local mirror otherwise)
+        4. Logged into usage store
         """
     )
 
-# --- Last run metrics ---
 if "last_result" in st.session_state:
     r = st.session_state["last_result"]
     st.subheader("Last gate result")
@@ -61,14 +59,12 @@ if "last_result" in st.session_state:
     c2.write(f"**Budget** · {r.budget.action.value}")
     c3.write(f"**Strategy** · {r.pruned.strategy if r.pruned else 'n/a'}")
 
-# --- Historical usage ---
 st.subheader("Usage history")
 rows = fetch_recent_usage(limit=50)
 if not rows:
     st.info("No rows yet. Click **Run gate on demo workload**.")
 else:
     df = pd.DataFrame(rows)
-    # Summary strip
     total_saved = int(df["tokens_saved"].sum())
     avg_pct = float(df["savings_pct"].mean())
     s1, s2, s3 = st.columns(3)
@@ -92,7 +88,6 @@ else:
         use_container_width=True,
         hide_index=True,
     )
-
     st.bar_chart(df.set_index("created_at")[["original_tokens", "final_tokens"]])
 
 st.divider()
