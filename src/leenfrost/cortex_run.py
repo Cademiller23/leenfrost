@@ -33,22 +33,39 @@ def connect():
     user = os.environ.get("SNOWFLAKE_USER")
     if not account or not user:
         raise RuntimeError("SNOWFLAKE_ACCOUNT / SNOWFLAKE_USER required")
+
     conn = snowflake.connector.connect(
         account=account,
         user=user,
         private_key=_private_key_bytes(),
-        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "LEENFROST_WH"),
-        database=os.environ.get("SNOWFLAKE_DATABASE", "LEENFROST"),
-        schema=os.environ.get("SNOWFLAKE_SCHEMA", "PUBLIC"),
     )
-    # Explicit session context — connector warehouse= sometimes does not bind
-    wh = os.environ.get("SNOWFLAKE_WAREHOUSE", "LEENFROST_WH")
-    db = os.environ.get("SNOWFLAKE_DATABASE", "LEENFROST")
-    sch = os.environ.get("SNOWFLAKE_SCHEMA", "PUBLIC")
+
+    preferred = os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
+    candidates = []
+    for w in (preferred, "COMPUTE_WH", "LEENFROST_WH"):
+        if w and w not in candidates:
+            candidates.append(w)
+
+    last_err: Exception | None = None
     with conn.cursor() as cur:
-        cur.execute(f"USE WAREHOUSE {wh}")
-        cur.execute(f"USE DATABASE {db}")
-        cur.execute(f"USE SCHEMA {sch}")
+        for wh in candidates:
+            try:
+                cur.execute(f'USE WAREHOUSE "{wh}"')
+                break
+            except Exception as e:
+                last_err = e
+        else:
+            conn.close()
+            raise RuntimeError(f"No usable warehouse among {candidates}: {last_err}")
+
+        db = os.environ.get("SNOWFLAKE_DATABASE", "LEENFROST")
+        sch = os.environ.get("SNOWFLAKE_SCHEMA", "PUBLIC")
+        try:
+            cur.execute(f'USE DATABASE "{db}"')
+            cur.execute(f'USE SCHEMA "{sch}"')
+        except Exception:
+            # DB optional for Cortex COMPLETE; continue on default context
+            pass
     return conn
 
 
