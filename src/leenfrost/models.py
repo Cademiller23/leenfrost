@@ -122,4 +122,9 @@ class GateResult(BaseModel):
     scs_hit: bool = False
     scs_hit_kind: str = "none"
     pnl_trace: list[str] = []
+    raw_tokens: int = 0
+    pruned_tokens_before_memory: int = 0
+    memory_injected_tokens: int = 0
+    provider_prompt_tokens: int = 0
+    model_tokens: int = 0
     processed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

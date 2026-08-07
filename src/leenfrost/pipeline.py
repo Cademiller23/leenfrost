@@ -184,6 +184,11 @@ def run_gate(
                 route=route,
                 final_messages=list(conversation.messages),
                 final_tokens=model_tokens,
+                model_tokens=0,
+                raw_tokens=original.total_tokens,
+                pruned_tokens_before_memory=0,
+                memory_injected_tokens=0,
+                provider_prompt_tokens=0,
                 tokens_saved=tokens_saved,
                 savings_percent=savings_percent,
                 estimated_cost_usd=0.0,
@@ -277,6 +282,9 @@ def run_gate(
         f"MODEL {route.selected_model}",
         f"SAVED {tokens_saved} ({savings_percent}%)",
     ]
+    raw_tok = original_estimate.total_tokens
+    # provider_prompt_tokens = what would be sent to the model after prune (+ memory already in messages)
+    provider_prompt = final_tokens
     result = GateResult(
         conversation_id=conversation.id,
         original_estimate=original_estimate,
@@ -295,6 +303,11 @@ def run_gate(
         scs_hit=False,
         scs_hit_kind="none",
         pnl_trace=pnl,
+        raw_tokens=raw_tok,
+        pruned_tokens_before_memory=getattr(pruned_result, "pruned_tokens", final_tokens) if pruned_result else final_tokens,
+        memory_injected_tokens=mem_inj,
+        provider_prompt_tokens=provider_prompt,
+        model_tokens=final_tokens,
     )
 
     # Attach EverOS economics on the object if model allows extra fields; store via signature path
